@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: frontend
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head><meta charset="utf-8"><title>Frontend</title></head>
+    <body><h1>Frontend</h1><p>Замените этот ConfigMap собранным интерфейсом.</p></body>
+    </html>
+  nginx.conf: |
+    worker_processes 1;
+    error_log /dev/stderr warn;
+    pid /tmp/nginx.pid;
+    events { worker_connections 64; }
+    http {
+      server {
+        listen 8080;
+        location /healthz {
+          default_type text/plain;
+          return 200 "ok\n";
+        }
+        location / {
+          root /usr/share/nginx/html;
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: nginx:1.27-alpine
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: html
+              mountPath: /usr/share/nginx/html
+            - name: nginx
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: html
+          configMap:
+            name: frontend
+            items:
+              - key: index.html
+                path: index.html
+        - name: nginx
+          configMap:
+            name: frontend
+            items:
+              - key: nginx.conf
+                path: nginx.conf

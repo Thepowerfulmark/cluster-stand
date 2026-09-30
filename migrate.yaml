@@ -1,0 +1,62 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: migrate
+data:
+  migrate.sh: |
+    #!/bin/sh
+    set -eu
+    until pg_isready -h postgres -U "$PGUSER" -d postgres; do
+      sleep 2
+    done
+    psql -h postgres -U "$PGUSER" -d postgres -v ON_ERROR_STOP=1 <<SQL
+    SELECT 'CREATE DATABASE ${PGDATABASE}'
+    WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${PGDATABASE}')\gexec
+    SQL
+    psql -h postgres -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 <<SQL
+    CREATE TABLE IF NOT EXISTS app_meta (
+      id integer PRIMARY KEY,
+      note text NOT NULL
+    );
+    INSERT INTO app_meta (id, note) VALUES (1, 'ready')
+    ON CONFLICT (id) DO NOTHING;
+    SQL
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate
+spec:
+  backoffLimit: 20
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: postgres:16-alpine
+          command: ["sh", "/migrate/migrate.sh"]
+          env:
+            - name: PGUSER
+              valueFrom:
+                secretKeyRef:
+                  name: db-auth
+                  key: username
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: db-auth
+                  key: password
+            - name: PGDATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: db-auth
+                  key: database
+          volumeMounts:
+            - name: script
+              mountPath: /migrate
+      volumes:
+        - name: script
+          configMap:
+            name: migrate
+            defaultMode: 0555
